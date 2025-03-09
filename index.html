@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文筵</title>
+    <style>
+        /* 原有样式保持不变 */
+        .block{
+            background-color: rgba(0, 0, 0,0.02);
+            border: 3px solid rgba(0, 0, 0,0.03);
+            border-radius: 10px;
+            top: 7.5%;
+            position: absolute;
+        }
+        .title{
+            position: absolute;
+            left: 12px;
+            top: -7px;
+            font-size: 19px;
+            font-family: 'Aa古典刻本宋';
+            color: black;
+        }
+        .button{
+            width: 50px;
+            height: 20px;
+            position: absolute;
+            border: none;
+            border-radius: 4px;
+            right: 11px;
+            top: 12px;
+            color: black;
+            font-size: 12px;
+            font-family: 'Aa古典刻本宋';
+            border: 2px solid transparent;
+            transition: border 0.3s;
+        }
+        .button:hover{
+            border: 1.6px solid rgba(0, 0, 0,0.08);
+        }
+        .content-container {
+            position: absolute;
+            top: 30px;
+            bottom: 0;
+            left: 4px;
+            padding: 9px;
+            overflow-y: auto;
+            font-family: '黑体';
+            font-size: 14px;
+            line-height: 1.5;
+            width: 93%;
+        }
+        .content-container textarea {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            border: none;
+            outline: none;
+            resize: none;
+            background: transparent;
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+        }
+        .content-container p {
+            margin: 0;
+            padding: 2px 0;
+            white-space: pre-wrap;
+        }
+        .text{
+            font-size: 14px;
+        }
+
+        #trans .content-container {
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body style="padding: 0%;margin:0;">
+
+    <div id="text" class="block" style="width: 35%;height: 90%;left:0.4%">
+        <p class="title">韫言原文</p>
+        <button id="changeBtn" class="button" onclick="toggleEdit()">修改</button>
+        <div id="contentContainer" class="content-container"></div>
+    </div>
+
+    <div id="trans" class="block" style="width: 35%;height: 90%;left:36.2%">
+        <p class="title">直译之意</p>
+        <div class="content-container" id="transResult"></div>
+    </div>
+
+    <div id="dict" class="block" style="width: 27.3%;height: 90%;left:71.9%">
+        <p class="title">说文解字</p>
+        <div class="content-container" id="aitrans"></div>
+    </div>
+
+    <script>
+        let isEditing = false;
+        
+        function toggleEdit() {
+            const container = document.getElementById('contentContainer');
+            const button = document.getElementById('changeBtn');
+            
+            if (isEditing) {
+                const textarea = container.querySelector('textarea');
+                const content = textarea.value;
+                window.sessionStorage.setItem('text', content);
+                sendToAPI(content + '\n 请对这篇文言文进行直译,翻译为现代的白话文，把每个字都翻译清晰，一定不要意译');
+                
+                const paragraphs = content.split('\n').map(line => line || ' '); 
+                container.innerHTML = paragraphs.map(p => `<p class="text">${p}</p>`).join('');
+                button.textContent = '修改';
+            } else {
+                const currentContent = Array.from(container.querySelectorAll('p'))
+                    .map(p => p.textContent.trim()).join('\n');
+                container.innerHTML = `<textarea>${currentContent}</textarea>`;
+                container.querySelector('textarea').focus();
+                button.textContent = '确定';
+            }
+            isEditing = !isEditing;
+        }
+
+        async function sendToAPI(content) {
+            const transResult = document.getElementById('transResult');
+            transResult.innerHTML = '';
+
+            try {
+                const response = await fetch('http://localhost:5000/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: content,
+                        history: [],
+                        stream: true
+                    })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullResponse = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n').filter(line => line.trim());
+                    
+                    for (const line of lines) {
+                        try {
+                            const data = JSON.parse(line);
+                            if (data.delta) {
+                                fullResponse += data.delta;
+                                transResult.innerHTML += data.delta;
+                                transResult.scrollTop = transResult.scrollHeight;
+                            }
+                        } catch (e) {
+                            console.error('解析错误:', e);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('API请求失败:', error);
+                transResult.innerHTML = '翻译请求失败，请重试';
+            }
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            const contentContainer = document.getElementById('contentContainer');
+            if (!contentContainer) return;
+
+            let selectionTimer = null;
+            let lastX = 0, lastY = 0;
+            const MOVE_THRESHOLD = 5;
+
+            function isSelectionInsideContainer() {
+                const selection = window.getSelection();
+                if (!selection.rangeCount) return false;
+                const range = selection.getRangeAt(0);
+                const ancestor = range.commonAncestorContainer;
+                const container = ancestor.nodeType === 3 ? ancestor.parentNode : ancestor;
+                return contentContainer.contains(container);
+            }
+            function saveSelection() {
+                const selection = window.getSelection().toString().trim();
+                if (selection && isSelectionInsideContainer()) {
+                sessionStorage.setItem('content', selection);
+                }
+            }
+            function handleMouseUp(e) {
+                lastX = e.clientX;
+                lastY = e.clientY;
+                
+                if (isSelectionInsideContainer()) {
+                if (selectionTimer) clearTimeout(selectionTimer);
+                selectionTimer = setTimeout(saveSelection, 800);
+                }
+            }
+            function handleMouseMove(e) {
+                if (!selectionTimer) return;
+                const dx = e.clientX - lastX;
+                const dy = e.clientY - lastY;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                if (distance > MOVE_THRESHOLD) {
+                    clearTimeout(selectionTimer);
+                    selectionTimer = null;
+                }
+            }
+
+            contentContainer.addEventListener('mouseup', handleMouseUp);
+            contentContainer.addEventListener('mousemove', handleMouseMove);
+        });
+
+        window.addEventListener('storage', (event) => {
+            if (event.storageArea === sessionStorage) {
+                console.log('变化的键:', event.key);
+                console.log('旧值:', event.oldValue);
+                console.log('新值:', event.newValue);
+            }
+        });
+
+        const originalSetItem = sessionStorage.setItem.bind(sessionStorage);
+        const originalRemoveItem = sessionStorage.removeItem.bind(sessionStorage);
+
+        sessionStorage.setItem = function(key, value) {
+        const oldValue = sessionStorage.getItem(key);
+        originalSetItem(key, value);
+        window.dispatchEvent(new CustomEvent('sessionStorageChanged', {
+            detail: { key, oldValue, newValue: value }
+        }));
+        };
+
+        sessionStorage.removeItem = function(key) {
+        const oldValue = sessionStorage.getItem(key);
+        originalRemoveItem(key);
+        window.dispatchEvent(new CustomEvent('sessionStorageChanged', {
+            detail: { key, oldValue, newValue: null }
+        }));
+        };
+
+        window.addEventListener('sessionStorageChanged', (e) => {
+            if(e.detail.key == 'content'){
+                let text = e.detail.newValue;
+                let a = document.getElementById('transResult')
+                callChatAPI(text + "\n 请帮我把这句文言文翻译一下",
+                    [
+                        {role: "user", content: window.sessionStorage.getItem('text') + '\n 请对这篇文言文进行直译,翻译为现代的白话文，把每个字都翻译清晰，一定不要意译'},
+                        {role: "assistant", content: a.textContent}
+                    ])
+                    .then(result => {
+                        if (result.success) {
+                            document.getElementById('aitrans').innerText = result.message;
+                        } else {
+                            console.error('请求失败:', result.error);
+                        }
+                    });
+                
+            }
+        });
+
+
+        async function callChatAPI(message,historys) {
+            try {
+                const response = await fetch('http://localhost:5000/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        history: historys,
+                        stream: false
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP错误 ${response.status}`);
+                }
+
+                const data = await response.json();
+                return {
+                    success: true,
+                    message: data.message,
+                    fullResponse: data
+                };
+                
+            } catch (error) {
+                return {
+                    success: false,
+                    error: error.message
+                };
+            }
+        }
+
+    </script>
+</body>
+</html>
