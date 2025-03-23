@@ -1,8 +1,44 @@
 from flask import Flask, request, jsonify, make_response
 import requests
 from bs4 import BeautifulSoup
+from flask_cors import CORS
+import re
 
 app = Flask(__name__)
+CORS(app)
+
+def convert_paragraphs(html_content):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    div = soup.find('div', class_='view_con clearfix')
+    
+    if not div:
+        return str(soup)
+
+    pattern = re.compile(
+        r'(?P<marker>[\u2460-\u2469\u247E-\u2487]+|【又】)(?P<content>.*?。)',
+        flags=re.DOTALL
+    )
+
+    for element in div.find_all(text=True):
+        if not pattern.search(element):
+            continue
+
+        new_content = []
+        last_end = 0
+        parent = element.parent
+        
+        for match in pattern.finditer(element):
+            new_content.append(element[last_end:match.start()])
+            span = soup.new_tag('span', attrs={'class': 'para'})
+            span.string = match.group('marker') + match.group('content')
+            new_content.append(span)
+            
+            last_end = match.end()
+        
+        new_content.append(element[last_end:])
+        element.replace_with(*new_content)
+
+    return str(soup)
 
 def chinese_to_hex_hwx(s):
     hex_str = s.encode('utf-8').hex().upper()
@@ -11,10 +47,13 @@ def chinese_to_hex_hwx(s):
 
 def trans(text):
     url = 'https://wyw.hwxnet.com/view/' + chinese_to_hex_hwx(text) + '.html'
-    r = requests.get(url).text
-    soup = BeautifulSoup(r, 'lxml')
-    ans = soup.find('div', class_='view_con clearfix')
-    return str(ans)
+    r = requests.get(url)
+    if r.status_code == 200:
+        soup = BeautifulSoup(r.text, 'lxml')
+        ans = soup.find('div', class_='view_con clearfix')
+        return convert_paragraphs(str(ans))
+    else:
+        return False
 
 @app.route('/trans', methods=['GET'])
 def translate_api():
@@ -25,9 +64,12 @@ def translate_api():
     
     try:
         result = trans(text)
-        response = make_response(result)
-        response.headers['Content-Type'] = 'text/html; charset=utf-8'
-        return response
+        if result == False:
+            return jsonify({'error': f'Request failed: {str(e)}'}), 500
+        else:
+            response = make_response(result)
+            response.headers['Content-Type'] = 'text/html; charset=utf-8'
+            return response
     except requests.exceptions.RequestException as e:
         return jsonify({'error': f'Request failed: {str(e)}'}), 500
     except Exception as e:

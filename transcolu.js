@@ -5,7 +5,22 @@ document.addEventListener('keydown', function(event) {
         let dict = document.getElementById('dict')
         let transtext = JSON.parse(window.sessionStorage.getItem('transtext'))
         let seq = window.sessionStorage.getItem('seq')
-        dict.innerText = transtext[seq % transtext.length]
+        let word = transtext[seq % transtext.length]
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'http://127.0.0.1:5000/trans?text=' + word);
+        xhr.onload = () => {
+        if (xhr.status === 200) {
+            dict.innerHTML = "<span id='noname' style='font-size: 32px;color: brown;position: absolute;top: 7px;left: 6px;'>" + word + '</span>'
+            let noname = document.getElementById('noname')
+            noname.style.fontFamily = 'AGDK'
+            let trans = xhr.responseText;
+            dict.innerHTML += trans
+        } else {
+            window.sessionStorage.setItem('seq',Number(window.sessionStorage.getItem('seq')) + 1)
+            refresh()
+        }
+        };
+        xhr.send();
     }
     if (event.code === 'Space') {
         if(tarea.style.display == 'none'){
